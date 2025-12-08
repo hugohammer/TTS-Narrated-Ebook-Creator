@@ -44,7 +44,7 @@ pip install -r requirements/requirements_xtts.txt
 ```
 
 ## Usage
-You need a clean Reference Voice Sample (WAV file, ~15 seconds) to clone the narrator's voice. A sample in English is provided in assets/neutral_narrator.wav (Google translate narrator). Several samples from multiple languages can also be found at [Chatterbox TTS Demo Samples](https://resemble-ai.github.io/chatterbox_demopage/).
+You need a clean Reference Voice Sample (WAV file, ~15 seconds) to clone the narrator's voice. A sample in English is provided in assets/neutral_narrator.wav (Google translate narrator). Several samples for multiple languages can also be found at [Chatterbox TTS Demo Samples](https://resemble-ai.github.io/chatterbox_demopage/).
 
 ## Running with Chatterbox (Standard)
 Ensure your env_chat environment is active.
@@ -83,7 +83,6 @@ Packaging: The modified files are re-zipped into a valid EPUB 3 file.
 * **Chatterbox:** Uses the MIT license.
 * **XTTS-v2:** Released under the **Coqui Public Model License (CPML)**. 
 
-
 <!--
 ## Citation
 If you use this code for your research, please cite the following paper:
@@ -101,7 +100,7 @@ If you use this code for your research, please cite the following paper:
   note = {To appear}
 }
 ```
-
 -->
+
 
 
