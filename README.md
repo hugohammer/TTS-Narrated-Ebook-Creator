@@ -27,9 +27,6 @@ Unlike other tools that require uploading books to the cloud (privacy risk) or d
 ## Installation
 We recommend using a virtual environment to manage dependencies. If you want to use both the XTTS and Chatterbox versions, we recommend to use different virtual environments.
 
-## Final comments
-Both Chatterbox and XTTS-v2 work very well in our experiments. Chatterbox is a bit more sensitive to the quality of the voice sample to avoid hallucinations.
-
 ```bash
 # Chatterbox
 # 1. Create Environment
@@ -106,3 +103,4 @@ If you use this code for your research, please cite the following paper:
 ```
 
 -->
+
