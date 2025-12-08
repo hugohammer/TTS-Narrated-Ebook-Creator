@@ -7,7 +7,7 @@ This tool converts standard text-based EPUB files into **EPUB 3 with Media Overl
 Unlike other tools that require uploading books to the cloud (privacy risk) or destroying the book's original layout (data loss), this tool performs runs offline and preserves the publisher’s original typography, styling, and embedded media.
 
 ## Key Features
-* **🔒 Privacy First:** The method runs entirely offline, and thereby eliminating the recurring costs, privacy risks, and copyright compliance issues associated with cloud-based solutions.
+* **🔒 Privacy First:** The method runs entirely offline, and thereby eliminating the recurring costs, privacy concerns, and copyright compliance issues associated with cloud-based solutions.
 * **🎯 Zero Drift:** Calculating timestamps during TTS rather than forced alignment. The audio and text never go out of sync.
 * **🎨 Layout Preservation:** Publisher’s original typography, styling, and embedded media are preserved
 * **🌓 Dark Mode Support:** Automatically generates high-contrast highlighting, e.g. purple for dark mode, yellow for light mode.
@@ -101,6 +101,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
