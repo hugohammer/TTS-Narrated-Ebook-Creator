@@ -77,7 +77,7 @@ Alignment: The tool writes a SMIL file linking the HTML IDs to the audio timesta
 Packaging: The modified files are re-zipped into a valid EPUB 3 file.
 
 ## Troubleshooting
-"FFmpeg not found" Ensure FFmpeg is installed and added to your system PATH. Run ffmpeg -version in your terminal to verify.
+"FFmpeg not found" Ensure FFmpeg is installed and added to your system PATH. Run ffmpeg -version in your terminal to verify.<br>
 "Out of Memory" (CUDA) Neural TTS is heavy. If you run out of VRAM, the script will automatically fallback to CPU (slower, but works).
 
 ## License & Acknowledgements
@@ -105,6 +105,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
