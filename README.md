@@ -5,7 +5,7 @@
 ## Key Features
 * **🔒 Offline:** The method runs entirely offline, and thereby eliminating the recurring costs, privacy concerns, and copyright compliance issues associated with cloud-based solutions.
 * **🎯 Zero Drift:** Calculating timestamps during TTS rather than forced alignment. The audio and text never go out of sync.
-* **🎨 Layout Preservation:** Publisher’s original typography, styling, and embedded media are preserved
+* **🎨 Layout Preservation:** Publisher’s original typography, styling, and embedded media are preserved.
 * **🌓 Dark Mode Support:** Automatically generates high-contrast highlighting, e.g. purple for dark mode, yellow for light mode.
 * 🧠 Supports both **Chatterbox** and **XTTS-v2**.
 
@@ -101,6 +101,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
