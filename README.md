@@ -48,11 +48,15 @@ You need a clean Reference Voice Sample (WAV file, ~15 seconds) to clone the nar
 
 ## Running with Chatterbox (Standard)
 Ensure your env_chat environment is active.
+```bash
 python src/epub_processor_chatterbox.py "my_book.epub" --voice assets/neutral_narrator.wav
+```
 
 ## Running with XTTS
 Ensure your env_xtts environment is active.
+```bash
 python src/epub_processor_xtts.py "my_book.epub" --voice assets/neutral_narrator.wav
+```
 
 ## Command Line Arguments
 
@@ -101,6 +105,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
