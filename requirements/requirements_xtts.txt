@@ -1,0 +1,9 @@
+TTS
+soundfile
+numpy
+torch
+EbookLib
+beautifulsoup4
+nltk
+tqdm
+lxml
