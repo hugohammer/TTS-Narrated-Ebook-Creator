@@ -11,6 +11,16 @@
 
 ---
 
+## 🎥 See Calliope in Action
+
+Watch a short demonstration of the system in use. This video shows the conversion process and the final playback in the Thorium reader, demonstrating the exact synchronization between the text highlighting and the TTS audio.
+
+[**▶️ Watch the Video Demonstration**](assets/calliope_demo.mp4)
+
+*(Click the link above to play the video directly in your browser)*
+
+---
+
 ## Prerequisites
 1.  **Python 3.11** (Recommended) or 3.10. *(Note: Python 3.12 is not yet supported by some audio libraries).*
 2.  **FFmpeg** installed on your system (required for audio processing).
@@ -107,6 +117,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
