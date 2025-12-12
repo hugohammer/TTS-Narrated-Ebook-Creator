@@ -1,6 +1,6 @@
 # Calliope: EPUB 3 Media Overlays Creator using TTS
 
-**Turn a static EPUB into a narrated audiobook with text highlighting (EPUB 3 Media Overlays).**
+**Turn a text EPUB into a narrated audiobook with text highlighting (EPUB 3 Media Overlays).**
 
 ## Key Features
 * **🔒 Offline:** The method runs entirely offline, and thereby eliminating the recurring costs, privacy concerns, and copyright compliance issues associated with cloud-based solutions.
@@ -107,6 +107,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
