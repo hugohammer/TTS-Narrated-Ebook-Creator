@@ -15,9 +15,7 @@
 
 Watch a short demonstration of the system in use. This video shows the conversion process and the final playback in the Thorium reader, demonstrating the exact synchronization between the text highlighting and the TTS audio.
 
-<a href="https://youtu.be/j15BHY1hh7w" target="_blank">
-  <strong>▶️ Watch the Video Demonstration</strong>
-</a>
+[**▶️ Watch the Video Demonstration**](https://youtu.be/j15BHY1hh7w)
 
 ---
 
@@ -117,6 +115,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
