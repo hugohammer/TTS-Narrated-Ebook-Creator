@@ -262,26 +262,31 @@ def process_xhtml_inplace(filepath, global_id_start, css_rel_path):
         for tag in soup.find_all(block_tags):
             if tag.find(block_tags): continue 
             
-            full_text = tag.get_text()
-            if not full_text.strip(): continue
+            full_text_raw = tag.get_text()
+            if not full_text_raw.strip(): continue
 
-            sentences = nltk.sent_tokenize(full_text)
-            if not sentences: continue
+            # Clean for NLTK
+            full_text_clean = re.sub(r'\s+', ' ', full_text_raw).strip()
+            sentences_clean = nltk.sent_tokenize(full_text_clean)
+            if not sentences_clean: continue
             
-            # 1. Boundary Calc
+            # 1. Fuzzy Boundary Calc
             split_indices = []
-            cursor = 0
-            for i, sent in enumerate(sentences):
-                start = full_text.find(sent, cursor)
-                if start == -1: end = cursor + len(sent)
+            cursor_raw = 0
+            for i, sent_clean in enumerate(sentences_clean):
+                safe_sent = re.escape(sent_clean)
+                pattern_str = safe_sent.replace(r'\ ', r'\s+')
+                pattern = re.compile(pattern_str)
+                match = pattern.search(full_text_raw, cursor_raw)
+                
+                if match:
+                    end_raw = match.end()
+                    while end_raw < len(full_text_raw) and full_text_raw[end_raw].isspace():
+                        end_raw += 1
+                    cursor_raw = end_raw
                 else:
-                    end = start + len(sent)
-                    if i < len(sentences) - 1:
-                        next_sent = sentences[i+1]
-                        next_start = full_text.find(next_sent, end)
-                        if next_start != -1: end = next_start
-                cursor = end
-                split_indices.append(cursor)
+                    cursor_raw = len(full_text_raw) # Fallback
+                split_indices.append(cursor_raw)
 
             # 2. Reconstruction
             new_html_content = ""
@@ -289,7 +294,7 @@ def process_xhtml_inplace(filepath, global_id_start, css_rel_path):
             current_char_count = 0
             
             seg_id = f"f{current_id:06d}"
-            segments.append({"id": seg_id, "text": clean_text_for_tts(sentences[0])})
+            segments.append({"id": seg_id, "text": clean_text_for_tts(sentences_clean[0])})
             current_id += 1
             
             new_html_content += f'<span id="{seg_id}">'
@@ -308,15 +313,43 @@ def process_xhtml_inplace(filepath, global_id_start, css_rel_path):
                         boundary = split_indices[current_sent_idx]
                         remaining_len = boundary - current_char_count
                         
+                        # --- THE FIX IS HERE ---
+                        # If we have reached (or passed) the boundary exactly at the end of this node,
+                        # we must TRIGGER THE SPLIT logic to register the next sentence.
+                        
                         if remaining_len <= 0:
+                            # Exact match or drift
+                            
+                            # Close current
+                            for t_name, _ in reversed(open_tags): new_html_content += f"</{t_name}>"
+                            new_html_content += "</span>"
+                            
+                            # Increment Index
                             current_sent_idx += 1
+                            
+                            # Start Next (if exists)
+                            if current_sent_idx < len(sentences_clean):
+                                seg_id = f"f{current_id:06d}"
+                                current_id += 1
+                                segments.append({"id": seg_id, "text": clean_text_for_tts(sentences_clean[current_sent_idx])})
+                                
+                                new_html_content += f'<span id="{seg_id}">'
+                                for t_name, t_attrs in open_tags:
+                                    attr_str = " ".join([f'{k}="{v}"' for k,v in t_attrs.items()])
+                                    new_html_content += f"<{t_name} {attr_str}>" if attr_str else f"<{t_name}>"
+                            
+                            # Note: We do NOT consume text here because remaining_len was 0.
+                            # We just perform the state switch and loop again to process the text 
+                            # (which now belongs to the new sentence) or exit if text is empty.
                             continue
 
+                        # Normal Processing
                         if len(text) <= remaining_len:
                             new_html_content += text
                             current_char_count += len(text)
                             break
                         else:
+                            # Split in middle of node
                             chunk = text[:remaining_len]
                             new_html_content += chunk
                             current_char_count += len(chunk)
@@ -325,10 +358,10 @@ def process_xhtml_inplace(filepath, global_id_start, css_rel_path):
                             new_html_content += "</span>"
                             
                             current_sent_idx += 1
-                            if current_sent_idx < len(sentences):
+                            if current_sent_idx < len(sentences_clean):
                                 seg_id = f"f{current_id:06d}"
                                 current_id += 1
-                                segments.append({"id": seg_id, "text": clean_text_for_tts(sentences[current_sent_idx])})
+                                segments.append({"id": seg_id, "text": clean_text_for_tts(sentences_clean[current_sent_idx])})
                                 
                                 new_html_content += f'<span id="{seg_id}">'
                                 for t_name, t_attrs in open_tags:
@@ -370,6 +403,7 @@ def process_xhtml_inplace(filepath, global_id_start, css_rel_path):
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(str(soup.prettify()))
     return segments, current_id
+
 
 
 # -------------------------------------------------------------------------
