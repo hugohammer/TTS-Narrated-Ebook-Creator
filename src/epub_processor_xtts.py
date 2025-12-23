@@ -401,9 +401,9 @@ def process_xhtml_inplace(filepath, global_id_start, css_rel_path):
         return [], global_id_start
 
     with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(str(soup.prettify()))
+        # Use str(soup) instead of prettify to prevent injecting unwanted whitespace
+        f.write(str(soup))
     return segments, current_id
-
 
 
 # -------------------------------------------------------------------------
