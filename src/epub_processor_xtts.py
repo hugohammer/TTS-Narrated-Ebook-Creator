@@ -3,9 +3,9 @@
 epub_processor_xtts.py
 
 The "Perfect Sync" Pipeline for EPUB 3 Audiobooks using XTTS-v2.
-- Generates compliant XHTML (with fixed titles & namespaces).
-- Generates compliant SMIL (with fixed relative paths & gapless timing).
-- Generates Audio (using robust TTS handling).
+- defaults to Smart Splitting, Ellipsis prosody hack, and Crossfading.
+- Preserves original text formatting in the visual eBook while sending 
+  cleaned text to the TTS engine.
 """
 
 import os
@@ -21,24 +21,29 @@ import numpy as np
 import soundfile as sf
 import argparse
 import nltk
+import io
 from tqdm import tqdm
 from bs4 import BeautifulSoup
 from TTS.api import TTS
 
+# --- Check for pydub (Required for crossfade) ---
+try:
+    from pydub import AudioSegment
+except ImportError:
+    print("Please install pydub: pip install pydub")
+    sys.exit(1)
+
 # === TUNING CONSTANTS ===
-CHUNK_CHAR_LIMIT = 200
+CHUNK_CHAR_LIMIT = 240
+CROSSFADE_MS = 50 
 # ========================
 
 def check_cuda():
     if torch.cuda.is_available():
-        props = torch.cuda.get_device_properties(0)
-        vram_gb = props.total_memory / (1024 ** 3)
-        # print(f"Found CUDA device with {vram_gb:.2f} GB VRAM.")
         return "cuda"
     return "cpu"
 
 def apply_pytorch_safe_globals_patch():
-    """Fixes PyTorch 2.6+ security restriction for XTTS."""
     import torch
     if hasattr(torch.serialization, 'add_safe_globals'):
         try:
@@ -46,23 +51,109 @@ def apply_pytorch_safe_globals_patch():
             from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
             from TTS.config.shared_configs import BaseDatasetConfig
             torch.serialization.add_safe_globals([XttsConfig, XttsAudioConfig, XttsArgs, BaseDatasetConfig])
-            # print("✅ Applied PyTorch 2.6+ safe globals patch.")
         except Exception as e:
-            print(f"⚠️ Warning: Could not apply PyTorch patch: {e}")
+            print(f"Warning: Could not apply PyTorch patch: {e}")
 
 # -------------------------------------------------------------------------
-# 1. EPUB INFRASTRUCTURE
+# 1. HELPER FUNCTIONS (SMART LOGIC ALWAYS ON)
+# -------------------------------------------------------------------------
+
+def smart_split_text(text, max_chars=CHUNK_CHAR_LIMIT):
+    """
+    Splits text while preserving prosody.
+    Prioritizes splitting at:
+    1. Strong punctuation (.?!)
+    2. Semi-strong punctuation (:;)
+    3. Weak punctuation (,)
+    """
+    text = text.strip()
+    if len(text) <= max_chars:
+        return [text]
+
+    # Define split priorities (Regex Pattern)
+    split_patterns = [
+        r'([.?!])\s',      # 1. End of sentence
+        r'([:;])\s',       # 2. Semi-colons
+        r'([,])\s',        # 3. Commas
+        r'(\s)'            # 4. Any space (fallback)
+    ]
+
+    best_split_point = -1
+    
+    # Search for the best split point within the last 75% of the limit
+    search_start = max_chars // 4
+    search_end = max_chars
+
+    chunk = text[:search_end]
+    
+    for pattern in split_patterns:
+        matches = list(re.finditer(pattern, chunk))
+        if matches:
+            valid_matches = [m for m in matches if m.start() > search_start]
+            if valid_matches:
+                last_match = valid_matches[-1]
+                best_split_point = last_match.end()
+                break 
+    
+    if best_split_point == -1:
+        best_split_point = max_chars
+
+    part1 = text[:best_split_point].strip()
+    part2 = text[best_split_point:].strip()
+    
+    return [part1] + smart_split_text(part2, max_chars)
+
+def apply_ellipsis_to_chunks(chunks):
+    """Adds '...' to cut boundaries to improve TTS prosody."""
+    modified_chunks = []
+    for i, chunk in enumerate(chunks):
+        new_chunk = chunk
+        # Add "..." to end if it's not the last chunk and doesn't end in punctuation
+        if i < len(chunks) - 1:
+            if not new_chunk.strip()[-1] in ".?!":
+                 new_chunk = new_chunk + "..."
+        
+        # Add "..." to start if it's not the first chunk
+        if i > 0:
+            new_chunk = "..." + new_chunk
+        
+        modified_chunks.append(new_chunk)
+    return modified_chunks
+
+def crossfade_audio_segments(wav_list, fade_ms=CROSSFADE_MS):
+    """Stitches a list of numpy audio arrays using pydub crossfade."""
+    if not wav_list:
+        return np.array([])
+
+    def numpy_to_audiosegment(data, sr=24000):
+        # normalize to 16-bit PCM
+        audio_int16 = (data * 32767).astype(np.int16)
+        return AudioSegment(
+            audio_int16.tobytes(), 
+            frame_rate=sr,
+            sample_width=2, 
+            channels=1
+        )
+
+    combined = numpy_to_audiosegment(wav_list[0])
+
+    for next_wav in wav_list[1:]:
+        next_seg = numpy_to_audiosegment(next_wav)
+        combined = combined.append(next_seg, crossfade=fade_ms)
+
+    samples = np.array(combined.get_array_of_samples())
+    return samples.astype(np.float32) / 32768.0
+
+# -------------------------------------------------------------------------
+# 2. EPUB INFRASTRUCTURE
 # -------------------------------------------------------------------------
 def unzip_epub(epub_path, extract_to):
     if os.path.exists(extract_to) and os.path.exists(os.path.join(extract_to, "META-INF")):
-        print(f"Work directory exists. Resuming from: {extract_to}")
         return
-
     if os.path.exists(extract_to):
         shutil.rmtree(extract_to)
     with zipfile.ZipFile(epub_path, 'r') as zip_ref:
         zip_ref.extractall(extract_to)
-    print(f"Unzipped to: {extract_to}")
 
 def find_opf(work_dir):
     container = os.path.join(work_dir, "META-INF", "container.xml")
@@ -103,9 +194,13 @@ def write_nuclear_css(styles_dir, css_filename):
         f.write(nuclear_css)
 
 # -------------------------------------------------------------------------
-# 2. TEXT PROCESSING
+# 3. TEXT PROCESSING (Visual vs Audio Decoupling)
 # -------------------------------------------------------------------------
 def clean_text_for_tts(text):
+    """
+    Aggressively cleans text for the TTS Engine to prevent hallucinations.
+    This does NOT affect the visual text in the ebook.
+    """
     text = unicodedata.normalize('NFKC', text)
     text = re.sub(r'\.\s\.\s\.', '...', text) 
     text = text.replace('—', ', ').replace('–', '-')
@@ -121,59 +216,164 @@ def clean_text_for_tts(text):
     text = allowed.sub("", text)
     return re.sub(r'\s+', ' ', text).strip()
 
+
+# -------------------------------------------------------------------------
+# 3. TEXT PROCESSING (HTML-PRESERVING DOM TRAVERSAL)
+# -------------------------------------------------------------------------
+def clean_text_for_tts(text):
+    """
+    Cleans text for TTS only. Visual text remains untouched.
+    """
+    text = unicodedata.normalize('NFKC', text)
+    text = re.sub(r'\.\s\.\s\.', '...', text)
+    text = text.replace('—', ', ').replace('–', '-')
+    text = re.sub(r'(?<=[a-zA-Z])[\u2018\u2019\u0027](?=[a-zA-Z])', '___APO___', text)
+    text = re.sub(r'["“”‘’\']', '', text)
+    text = text.replace('___APO___', "'")
+    text = re.sub(r'[!]{2,}', '!', text)
+    text = re.sub(r'[?]{2,}', '?', text)
+    allowed = re.compile(r"[^a-zA-Z0-9\s.,?!;:'-]")
+    text = allowed.sub("", text)
+    return re.sub(r'\s+', ' ', text).strip()
+
 def process_xhtml_inplace(filepath, global_id_start, css_rel_path):
-    with open(filepath, 'r', encoding='utf-8') as f:
-        soup = BeautifulSoup(f, 'xml')
-
-    for tag in soup.find_all("a"):
-        classes = tag.get("class", [])
-        role = tag.get("role", "")
-        epub_type = tag.get("epub:type", "")
-        if "noteref" in classes or role == "doc-noteref" or "noteref" in epub_type:
-            tag.decompose()
-
-    head = soup.find('head')
-    if head:
-        css_name = os.path.basename(css_rel_path)
-        exists = False
-        for link in head.find_all('link'):
-            if css_name in link.get('href', ''):
-                exists = True
-                break
-        if not exists:
-            new_link = soup.new_tag("link", rel="stylesheet", href=css_rel_path, type="text/css")
-            head.append(new_link)
-            
-    if soup.title and not soup.title.string:
-        soup.title.string = ""
-
-    segments = []
-    current_id = global_id_start
-    block_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'div']
+    filename = os.path.basename(filepath)
+    print(f"Processing: {filename}")
     
-    for tag in soup.find_all(block_tags):
-        if tag.find(block_tags): continue
-            
-        original_text = tag.get_text()
-        clean = clean_text_for_tts(original_text)
-        if not clean: continue
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            soup = BeautifulSoup(f, 'xml')
 
-        tag.clear()
-        sentences = nltk.sent_tokenize(clean)
-        for sent in sentences:
+        # Cleanup & CSS
+        for tag in soup.find_all("a"):
+            if "noteref" in tag.get("class", []) or tag.get("role") == "doc-noteref": tag.decompose()
+        
+        head = soup.find('head')
+        if head:
+            css_name = os.path.basename(css_rel_path)
+            if not any(css_name in l.get('href', '') for l in head.find_all('link')):
+                head.append(soup.new_tag("link", rel="stylesheet", href=css_rel_path, type="text/css"))
+
+        segments = []
+        current_id = global_id_start
+        block_tags = ['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'div']
+        VOID_TAGS = {'br', 'img', 'hr', 'area', 'base', 'col', 'embed', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'}
+
+        for tag in soup.find_all(block_tags):
+            if tag.find(block_tags): continue 
+            
+            full_text = tag.get_text()
+            if not full_text.strip(): continue
+
+            sentences = nltk.sent_tokenize(full_text)
+            if not sentences: continue
+            
+            # 1. Boundary Calc
+            split_indices = []
+            cursor = 0
+            for i, sent in enumerate(sentences):
+                start = full_text.find(sent, cursor)
+                if start == -1: end = cursor + len(sent)
+                else:
+                    end = start + len(sent)
+                    if i < len(sentences) - 1:
+                        next_sent = sentences[i+1]
+                        next_start = full_text.find(next_sent, end)
+                        if next_start != -1: end = next_start
+                cursor = end
+                split_indices.append(cursor)
+
+            # 2. Reconstruction
+            new_html_content = ""
+            current_sent_idx = 0
+            current_char_count = 0
+            
             seg_id = f"f{current_id:06d}"
+            segments.append({"id": seg_id, "text": clean_text_for_tts(sentences[0])})
             current_id += 1
-            span = soup.new_tag("span", id=seg_id)
-            span.string = sent + " "
-            tag.append(span)
-            segments.append({"id": seg_id, "text": sent})
+            
+            new_html_content += f'<span id="{seg_id}">'
+            
+            def traverse(node, open_tags):
+                nonlocal new_html_content, current_char_count, current_sent_idx, current_id
+                
+                if isinstance(node, str):
+                    text = str(node)
+                    while len(text) > 0:
+                        if current_sent_idx >= len(split_indices):
+                            new_html_content += text
+                            current_char_count += len(text)
+                            break
+
+                        boundary = split_indices[current_sent_idx]
+                        remaining_len = boundary - current_char_count
+                        
+                        if remaining_len <= 0:
+                            current_sent_idx += 1
+                            continue
+
+                        if len(text) <= remaining_len:
+                            new_html_content += text
+                            current_char_count += len(text)
+                            break
+                        else:
+                            chunk = text[:remaining_len]
+                            new_html_content += chunk
+                            current_char_count += len(chunk)
+                            
+                            for t_name, _ in reversed(open_tags): new_html_content += f"</{t_name}>"
+                            new_html_content += "</span>"
+                            
+                            current_sent_idx += 1
+                            if current_sent_idx < len(sentences):
+                                seg_id = f"f{current_id:06d}"
+                                current_id += 1
+                                segments.append({"id": seg_id, "text": clean_text_for_tts(sentences[current_sent_idx])})
+                                
+                                new_html_content += f'<span id="{seg_id}">'
+                                for t_name, t_attrs in open_tags:
+                                    attr_str = " ".join([f'{k}="{v}"' for k,v in t_attrs.items()])
+                                    new_html_content += f"<{t_name} {attr_str}>" if attr_str else f"<{t_name}>"
+                            
+                            text = text[remaining_len:]
+
+                elif node.name:
+                    attrs = {k: " ".join(v) if isinstance(v, list) else v for k, v in node.attrs.items()}
+                    attr_str = " ".join([f'{k}="{v}"' for k,v in attrs.items()])
+                    tag_open = f"<{node.name} {attr_str}>" if attr_str else f"<{node.name}>"
+
+                    if node.name in VOID_TAGS:
+                        new_html_content += tag_open.replace(">", " />")
+                    else:
+                        open_tags.append((node.name, attrs))
+                        new_html_content += tag_open
+                        for child in node.contents:
+                            traverse(child, open_tags)
+                        new_html_content += f"</{node.name}>"
+                        open_tags.pop()
+
+            for child in tag.contents:
+                traverse(child, [])
+                
+            new_html_content += "</span>"
+            
+            wrapped_content = f"<body>{new_html_content}</body>"
+            new_soup = BeautifulSoup(wrapped_content, 'xml')
+            tag.clear()
+            if new_soup.body:
+                for child in list(new_soup.body.contents): tag.append(child)
+
+    except Exception as e:
+        print(f"  [ERROR] Failed to process {filename}: {e}")
+        return [], global_id_start
 
     with open(filepath, 'w', encoding='utf-8') as f:
         f.write(str(soup.prettify()))
     return segments, current_id
 
+
 # -------------------------------------------------------------------------
-# 3. AUDIO & SMIL GENERATION
+# 4. AUDIO & SMIL GENERATION
 # -------------------------------------------------------------------------
 def get_audio_duration(filepath):
     try:
@@ -182,21 +382,14 @@ def get_audio_duration(filepath):
         return float(result.stdout.strip())
     except: return 0.0
 
-def safe_tts(model, text, speaker, lang):
-    chunk = text.replace("\n", " ").strip()
-    if not chunk: return []
-    if len(chunk) > 200:
-        mid = len(chunk)//2
-        split = chunk.rfind(" ", 0, mid)
-        if split == -1: split = mid
-        return safe_tts(model, chunk[:split], speaker, lang) + safe_tts(model, chunk[split:], speaker, lang)
+def generate_tts_chunk(model, chunk_text, speaker, lang):
+    """Simple wrapper to generate one chunk without splitting logic."""
     try:
-        # XTTS API
-        wav = model.tts(text=chunk, speaker_wav=speaker, language=lang)
-        return [np.array(wav)]
+        wav = model.tts(text=chunk_text, speaker_wav=speaker, language=lang)
+        return np.array(wav)
     except Exception as e:
-        print(f"\n[TTS ERROR] Failed on text: '{chunk[:20]}...'\nReason: {e}")
-        return [np.zeros(24000)]
+        print(f"\n[TTS ERROR] Failed on text: '{chunk_text[:20]}...'\nReason: {e}")
+        return np.zeros(24000)
 
 def format_time(seconds):
     m, s = divmod(seconds, 60)
@@ -204,7 +397,6 @@ def format_time(seconds):
     return f"{int(h)}:{int(m):02d}:{s:06.3f}"
 
 def create_smil_content(basename, segments, audio_filename, rel_text_path):
-    """Generates compliant SMIL 3.0 XML with gapless timing."""
     xml = '<?xml version="1.0" encoding="utf-8"?>\n'
     xml += '<smil xmlns="http://www.w3.org/ns/SMIL" xmlns:epub="http://www.idpf.org/2007/ops" version="3.0">\n'
     xml += '  <body>\n'
@@ -215,7 +407,7 @@ def create_smil_content(basename, segments, audio_filename, rel_text_path):
     for i, seg in enumerate(segments):
         clip_start = seg['start']
         if i < len(segments) - 1:
-            clip_end = segments[i+1]['start'] # Gapless
+            clip_end = segments[i+1]['start']
         else:
             clip_end = seg['end']
 
@@ -233,8 +425,10 @@ def create_smil_content(basename, segments, audio_filename, rel_text_path):
     xml += '</smil>'
     return xml
 
-# --- FIX: Added generate_audio_flag argument ---
 def generate_media(basename, segments, model, speaker, lang, audio_dir, smil_dir, rel_text_path, generate_audio_flag):
+    """
+    Generates audio using implicit Smart Splitting, Ellipsis, and Crossfading.
+    """
     mp3_path = os.path.join(audio_dir, f"{basename}.mp3")
     smil_path = os.path.join(smil_dir, f"{basename}.smil")
     
@@ -248,16 +442,36 @@ def generate_media(basename, segments, model, speaker, lang, audio_dir, smil_dir
     sr = 24000
     
     if generate_audio_flag:
-        for seg in tqdm(segments, desc="TTS", leave=False):
-            wavs = safe_tts(model, seg['text'], speaker, lang)
-            wav_data = np.concatenate(wavs) if wavs else np.zeros(int(0.5*sr))
+        for seg in tqdm(segments, desc=f"TTS ({basename})", leave=False):
+            # seg['text'] is now the CLEAN text, safe for TTS
+            text = seg['text'].replace("\n", " ").strip()
+            if not text: continue
             
-            dur = len(wav_data) / sr
+            # --- ALWAYS USE SMART SPLIT ---
+            chunks = smart_split_text(text)
+            
+            # --- ALWAYS USE ELLIPSIS HACK ---
+            chunks = apply_ellipsis_to_chunks(chunks)
+            
+            chunk_wavs = []
+            for chunk in chunks:
+                w = generate_tts_chunk(model, chunk, speaker, lang)
+                chunk_wavs.append(w)
+            
+            # --- ALWAYS USE CROSSFADE ---
+            if len(chunk_wavs) > 1:
+                final_sentence_wav = crossfade_audio_segments(chunk_wavs, fade_ms=50)
+            else:
+                final_sentence_wav = np.concatenate(chunk_wavs) if chunk_wavs else np.zeros(0)
+
+            dur = len(final_sentence_wav) / sr
             start = curr_time
             end = curr_time + dur
             
             sync_data.append({"id": seg['id'], "start": start, "end": end})
-            full_audio.append(wav_data)
+            full_audio.append(final_sentence_wav)
+            
+            # Add small silence between sentences
             full_audio.append(np.zeros(int(0.15 * sr)))
             curr_time = end + 0.15
             
@@ -273,11 +487,9 @@ def generate_media(basename, segments, model, speaker, lang, audio_dir, smil_dir
             total_duration = 0
     else:
         total_duration = 10.0
-        # Mock sync data for SMIL generation if audio is skipped
         for i, seg in enumerate(segments):
             sync_data.append({"id": seg['id'], "start": i*5.0, "end": (i+1)*5.0})
 
-    # Save SMIL
     smil_content = create_smil_content(basename, sync_data, f"{basename}.mp3", rel_text_path)
     with open(smil_path, "w", encoding="utf-8") as f:
         f.write(smil_content)
@@ -285,7 +497,7 @@ def generate_media(basename, segments, model, speaker, lang, audio_dir, smil_dir
     return total_duration
 
 # -------------------------------------------------------------------------
-# 4. OPF UPDATER
+# 5. OPF UPDATER & PACKAGING
 # -------------------------------------------------------------------------
 def update_opf(opf_path, manifest_additions, spine_mapping, total_durations):
     with open(opf_path, 'r', encoding='utf-8') as f:
@@ -332,9 +544,6 @@ def update_opf(opf_path, manifest_additions, spine_mapping, total_durations):
     with open(opf_path, 'w', encoding='utf-8') as f:
         f.write(xml_str)
 
-# -------------------------------------------------------------------------
-# 5. PACKAGING
-# -------------------------------------------------------------------------
 def zip_dir(folder, output_path):
     with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         zipf.write(os.path.join(folder, "mimetype"), "mimetype", compress_type=zipfile.ZIP_STORED)
@@ -356,6 +565,8 @@ def parse_arguments():
     parser.add_argument("--language", "-l", default="en", help="Language code (default: en)")
     parser.add_argument("--skip-audio", action="store_true", help="Skip TTS generation (for debugging layout)")
     parser.add_argument("--gpu", action="store_true", help="Force usage of GPU if available")
+    
+    # Removed experimental flags since they are now default
 
     return parser.parse_args()
 
@@ -365,47 +576,34 @@ def parse_arguments():
 def main():
     args = parse_arguments()
     
-    # 1. Setup Inputs
     INPUT_EPUB = args.input_epub
     SPEAKER_WAV = args.voice
     BOOK_LANGUAGE = args.language
     GENERATE_AUDIO = not args.skip_audio
-
-    # 2. Setup Output Path (ROBUST LOGIC)
-    # Get the input filename without extension (e.g., "mybook")
+    
     input_basename = os.path.splitext(os.path.basename(INPUT_EPUB))[0]
-    default_filename = f"{input_basename}_Audio_Overlay.epub"
+    default_filename = f"{input_basename}_Narrated.epub"
 
     if args.output:
-        # Check if the argument provided is an existing directory or looks like one
         if os.path.isdir(args.output) or args.output.endswith(os.sep):
-            # It is a folder -> Place the file inside it with the default name
-            # Ensure directory exists
             os.makedirs(args.output, exist_ok=True)
             OUTPUT_EPUB = os.path.join(args.output, default_filename)
         else:
-            # It is a specific file path -> Use it exactly as provided
             OUTPUT_EPUB = args.output
-            # Ensure parent directory exists
             parent_dir = os.path.dirname(os.path.abspath(OUTPUT_EPUB))
             if parent_dir: os.makedirs(parent_dir, exist_ok=True)
     else:
-        # Default: Place next to input file
         input_dir = os.path.dirname(os.path.abspath(INPUT_EPUB))
         OUTPUT_EPUB = os.path.join(input_dir, default_filename)
 
-    # 3. Setup Work Directory
-    # We place it next to the INPUT file, hidden, unique to the book name
     input_dir = os.path.dirname(os.path.abspath(INPUT_EPUB))
     WORK_DIR = os.path.join(input_dir, f".{input_basename}_workdir")
 
     print(f"=== STARTING PIPELINE ===")
     print(f"Input:    {INPUT_EPUB}")
-    print(f"Work Dir: {WORK_DIR}")
     print(f"Output:   {OUTPUT_EPUB}")
-    print(f"Voice:    {SPEAKER_WAV}")
+    print(f"Features: Smart Split + Ellipsis + Crossfade ENABLED")
 
-    # Validate Inputs
     if not os.path.exists(INPUT_EPUB):
         print(f"Error: Input file not found: {INPUT_EPUB}")
         sys.exit(1)
@@ -480,8 +678,10 @@ def main():
         
         if not segments: continue 
         
-        # --- FIX: Pass GENERATE_AUDIO to function ---
-        duration = generate_media(basename, segments, tts, SPEAKER_WAV, BOOK_LANGUAGE, audio_dir, smil_dir, rel_text_path, GENERATE_AUDIO)
+        duration = generate_media(
+            basename, segments, tts, SPEAKER_WAV, BOOK_LANGUAGE, 
+            audio_dir, smil_dir, rel_text_path, GENERATE_AUDIO
+        )
         
         smil_id = f"smil_{basename}"
         audio_id = f"audio_{basename}"
