@@ -65,13 +65,14 @@ python src/epub_processor_xtts.py "my_book.epub" --voice assets/neutral_narrator
 
 ### Command Line Arguments
 
-| Argument        | Description                                                  |
-|-----------------|--------------------------------------------------------------|
-| input_file      | Path to the source EPUB file.                                |
-| --voice / -v    | Required. Path to a 10-15s WAV file for voice cloning.       |
-| --output / -o   | (Optional) Custom path for the resulting EPUB.               |
-| --gpu           | Force GPU usage if available (Recommended for speed).        |
-| --skip-audio    | Debug mode. Generates XHTML/SMIL structure but skips TTS.    |
+| Argument        | Description                                                       |
+|-----------------|-------------------------------------------------------------------|
+| input_file      | Path to the source EPUB file.                                     |
+| --voice / -v    | Required. Path to a 10-15s WAV file for voice cloning.            |
+| --output / -o   | (Optional) Custom path for the resulting EPUB.                    |
+| --gpu           | Force GPU usage if available (Recommended for speed).             |
+| --skip-audio    | Debug mode. Generates XHTML/SMIL structure but skips TTS.         |
+| --language      | Specifies the target language for the TTS engine (default: 'en')  |
 
 ---
 
@@ -115,6 +116,7 @@ If you use this code for your research, please cite the following paper:
 }
 ```
 -->
+
 
 
 
