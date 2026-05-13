@@ -100,8 +100,10 @@ Packaging: The modified files are re-zipped into a valid EPUB 3 file.
 
 
 ## Citation
+
 If you use this code for your research, please cite the following paper:
-Hammer, H. L., Thambawita, V., & Halvorsen, P. (2026, April). Calliope: A TTS-based Narrated E-book Creator Ensuring Exact Synchronization, Privacy, and Layout Fidelity. In Proceedings of the ACM Multimedia Systems Conference 2026 (pp. 416-422).
+
+> Hammer, H. L., Thambawita, V., & Halvorsen, P. (2026, April). Calliope: A TTS-based Narrated E-book Creator Ensuring Exact Synchronization, Privacy, and Layout Fidelity. In *Proceedings of the ACM Multimedia Systems Conference 2026* (pp. 416-422).
 
 **BibTeX:**
 ```bibtex
