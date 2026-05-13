@@ -98,24 +98,22 @@ Packaging: The modified files are re-zipped into a valid EPUB 3 file.
 * **Chatterbox:** Uses the MIT license.
 * **XTTS-v2:** Released under the **Coqui Public Model License (CPML)**. 
 
-<!--
+
 ## Citation
 If you use this code for your research, please cite the following paper:
-> **[Paper Title]**
-> *[Your Name], [Co-Author Name]*
-> [Conference/Journal Name], 2025.
+Hammer, H. L., Thambawita, V., & Halvorsen, P. (2026, April). Calliope: A TTS-based Narrated E-book Creator Ensuring Exact Synchronization, Privacy, and Layout Fidelity. In Proceedings of the ACM Multimedia Systems Conference 2026 (pp. 416-422).
 
 **BibTeX:**
 ```bibtex
-@inproceedings{YourSurname2025,
-  title = {Automated Generation of Synchronized EPUB 3 Media Overlays using Neural Text-to-Speech},
-  author = {Your Name and Co-Author Name},
-  booktitle = {Proceedings of the [Conference Name]},
-  year = {2025},
-  note = {To appear}
+@inproceedings{hammer2026calliope,
+  title={Calliope: A TTS-based Narrated E-book Creator Ensuring Exact Synchronization, Privacy, and Layout Fidelity},
+  author={Hammer, Hugo L and Thambawita, Vajira and Halvorsen, P{\aa}l},
+  booktitle={Proceedings of the ACM Multimedia Systems Conference 2026},
+  pages={416--422},
+  year={2026}
 }
 ```
--->
+
 
 
 
